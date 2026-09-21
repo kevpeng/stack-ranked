@@ -1,48 +1,63 @@
 # Stack Ranked
 
-**Beli for feature prioritization.** Stakeholders answer one question at a time — *"which of these two should we ship first?"* — and those taps compile into a statistically sound, continuously-updated ranking of your Jira or Linear backlog.
+**Beli for your backlog.** One product owner, one ranked list. Answer *"which of these two ships first?"* a few dozen times and your Jira or Linear backlog comes out actually ordered — then stays ordered for about two minutes a day.
 
 ---
 
 ## The pitch
 
-Nobody can tell you the impact of a feature on a 1–10 scale. Everybody can tell you which of two features matters more.
+You own a 300-item backlog. You can honestly rank the top 10. Below that, the order is fiction — stored in Jira, unexamined since March, and indefensible when someone asks why #7 is above #12.
 
-Prioritization frameworks (RICE, WSJF, MoSCoW, ICE) ask for absolute numbers that humans cannot produce reliably. So teams fake the numbers, and the real decision gets made in a 60-minute meeting by whoever argues hardest. The backlog becomes a 2,000-row graveyard where everything is P2.
+The problem isn't laziness, it's working memory. **Dragging a list requires holding the whole list in your head. Comparing two items doesn't.** So the list never gets ordered, and "backlog grooming" becomes a two-hour meeting that everyone survives rather than finishes.
 
-Beli solved the same problem for restaurants: don't ask for a score, ask for a comparison, and binary-search the item into a ranked list in ~6 taps. Stack Ranked applies that to backlogs — with the twist that backlogs are **multiplayer**. Ten people rank the same list, and where they *disagree* is the most valuable output the tool produces.
+Beli solved exactly this for restaurants: never ask for a score, ask which of two was better, and binary-search the item into place in ~6 taps. The score is derived from the rank, never typed. Stack Ranked does that to a backlog.
+
+## Why single-player is the right first pass
+
+The math works out much better than the committee version:
+
+| | Multiplayer | **Single-player** |
+|---|---|---|
+| Comparisons to settle the cut line (60 items) | ~165 | **~100** |
+| Why | 10 people disagree; noise is high | One person is self-consistent (~85–90%) |
+| Time to a settled list | 8–12 days of daily voting | **one 15-minute sitting** |
+| Hardest problem | getting 10 people to vote daily | getting 1 person to enjoy it |
+
+That last row is the whole argument. A single motivated PO ranking their own backlog will sit for ~180 duels the way they'd sit to import a library into Letterboxd. **Convergence stops being a waiting game and becomes an onboarding session.**
+
+It also deletes most of the complexity: no vote weights, no roster, no consensus, no anti-gaming (you can't cheat a game you play against yourself), no per-role aggregation, and no reason to split scoring into online + batch — with one voter the model refits in under a millisecond on every tap.
 
 ## The loop
 
 ```
-   ┌──────────────┐    request or challenge a ticket
-   │   INTAKE     │──────────────────────────────────────┐
-   └──────────────┘                                      │
-                                                         ▼
-   ┌──────────────┐     "Ship first: A or B?"    ┌───────────────┐
-   │  DAILY DUEL  │───────────────────────────── │  COMPARISON   │
-   │  (Slack DM)  │      5 taps, 30 seconds      │    EVENTS     │
-   └──────────────┘                              └───────┬───────┘
-                                                         │ append-only
-                                                         ▼
-                                              ┌─────────────────────┐
-                                              │  BRADLEY–TERRY FIT  │
-                                              │  θ + uncertainty    │
-                                              └──────────┬──────────┘
-                                                         ▼
-   ┌───────────────────────────────────────────────────────────────┐
-   │  LADDER: ranked list · cut line · contested items · upsets    │
-   └───────────────────────────┬───────────────────────────────────┘
-                               │ explicit, previewed, reversible
-                               ▼
-                    ┌──────────────────────┐
-                    │  Jira / Linear order │
-                    └──────────────────────┘
+   ONBOARDING (once, ~15 min)          MAINTENANCE (~2 min/day)
+   ┌─────────────────────────┐         ┌──────────────────────────┐
+   │ seed order from Jira    │         │  new requests land in    │
+   │          ↓              │         │  the Unplaced queue      │
+   │ ~180 duels              │         │          ↓               │
+   │          ↓              │         │  place each: ~4-6 taps   │
+   │ SETTLED LIST + the      │         │          ↓               │
+   │ diff vs. what Jira said │         │  a few maintenance duels │
+   └─────────────────────────┘         │  where confidence decayed│
+                                       └──────────────────────────┘
+                     │                              │
+                     └──────────────┬───────────────┘
+                                    ▼
+                    ranked list · cut line · write back to tracker
 ```
 
-## Why it isn't just an upvote board
+## The first-session payoff
 
-Upvote boards (Canny, Productboard, Aha! ideas) measure **enthusiasm**. Enthusiasm is free, so everything trends up and nothing gets decided. A pairwise duel costs the voter something real: to pick A they must give up B. You cannot say "everything is P1" to a duel.
+You seed from your existing Jira order, do ~180 duels, and the app shows you:
+
+> **Your stored backlog order and your actual judgment disagree on 34 of 61 items.**
+> 9 items you'd ranked below the cut line belong above it.
+
+That's the aha, it lands in the first fifteen minutes, and it's free — it falls straight out of comparing the seeded order to the settled one.
+
+## Ranking is single-player. Intake doesn't have to be.
+
+Anyone can throw a request at the backlog — Slack, a Jira ticket, a form. **Only the PO ranks.** This keeps the wedge tight while preserving the most useful multiplayer bit: triaging 40 inbound requests stops being a dreaded queue and becomes 40 × 5 taps.
 
 ## Status
 
@@ -50,15 +65,16 @@ Upvote boards (Canny, Productboard, Aha! ideas) measure **enthusiasm**. Enthusia
 
 | Doc | What's in it |
 |---|---|
-| [00 — Vision](docs/00-vision.md) | Problem, core insight, positioning, non-goals |
-| [01 — Product spec](docs/01-product-spec.md) | Personas, objects, the four loops, screens, copy |
-| [02 — Ranking model](docs/02-ranking-model.md) | Elicitation + aggregation math, convergence, the cut line |
-| [03 — Gamification & integrity](docs/03-gamification.md) | What works, what backfires, anti-gaming |
-| [04 — Integrations](docs/04-integrations.md) | Linear, Jira, Slack; sync and write-back policy |
-| [05 — Architecture](docs/05-architecture.md) | Stack, schema sketch, scoring pipeline, simulation harness |
-| [06 — Roadmap](docs/06-roadmap.md) | Phasing, milestones, success metrics, scope cuts |
+| [00 — Vision](docs/00-vision.md) | Problem, why pairwise, positioning, non-goals |
+| [01 — Product spec](docs/01-product-spec.md) | The PO, the three loops, screens, copy |
+| [02 — Ranking model](docs/02-ranking-model.md) | Elicitation + aggregation, why BT survives single-player |
+| [03 — Gamification](docs/03-gamification.md) | Single-player mechanics; what backfires |
+| [04 — Integrations](docs/04-integrations.md) | Linear, Jira; sync and write-back |
+| [05 — Architecture](docs/05-architecture.md) | Stack, schema, inline scoring, simulation harness |
+| [06 — Roadmap](docs/06-roadmap.md) | Phasing, metrics, scope cuts |
 | [07 — Open questions](docs/07-open-questions.md) | Decisions needed, risks, kill criteria |
+| [08 — Multiplayer, later](docs/08-multiplayer-later.md) | The consensus design, parked but not lost |
 
-## One-line summary of the design bet
+## The design bet
 
-> Elicit with binary insertion (fast, fun, Beli-like). Aggregate with Bradley–Terry (honest, multiplayer, uncertainty-aware). Spend your comparisons where the decision actually is — at the cut line. Never let the tool make the call; make it impossible for the PM to make the call uninformed.
+> Elicit with binary insertion (fast, fun, Beli-like). Aggregate with Bradley–Terry anyway — not to reconcile people, but to survive *your own* inconsistency and to let confidence decay so the list knows when it's gone stale. Spend taps at the cut line. Make one person's afternoon produce a backlog order they'd defend in a meeting.

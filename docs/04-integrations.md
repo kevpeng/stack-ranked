@@ -1,40 +1,46 @@
 # 04 — Integrations
 
-> **Confidence note.** API shapes below are from working knowledge and are accurate enough to plan against, but specifics marked **[SPIKE]** must be verified against current docs before they're committed to in a schedule. Integration work is where estimates go to die; the spike checklist at the end exists to front-load that risk into week one.
+> **Confidence note.** API shapes below are accurate enough to plan against, but anything marked **[SPIKE]** must be verified against current docs before it's committed to a schedule. Integration work is where estimates die; the checklist at the end front-loads that risk into week one.
+
+## What single-player simplifies
+
+Three things get materially easier, and one gets a promotion:
+
+**Identity mapping mostly disappears.** The multiplayer design needed to handle Sales and Support stakeholders who vote but have no Jira seat — invite flows, email matching, weighted guest accounts. Single-player: the PO is definitionally the person who owns the backlog, so they definitionally have a tracker seat. One OAuth, one identity. An entire subsystem deleted.
+
+**Slack gets demoted from primary client to optional nudge.** This is the biggest change. Multiplayer *had* to live in Slack — you can't ask ten stakeholders to open a sixth tab. But the PO already opens Jira or Linear all day; a focused 15-minute ranking session belongs in a real UI with keyboard shortcuts, not in a chat card. **Slack moves to Phase 2** as a daily maintenance nudge, and Phase 1 gets meaningfully smaller.
+
+**Write-back gets more aggressive.** The "don't reorder someone else's backlog" objection dissolves when there's exactly one owner. Auto-apply becomes a reasonable *option* (still not the default — see below).
 
 ---
 
 ## Sync philosophy: mirror in, write narrow
 
-Bidirectional sync is a trap. Two systems that both believe they own ordering will fight, and the resulting loops are miserable to debug and worse to explain to a customer.
-
 ```
   TRACKER ──────────── read: continuous, everything ──────────▶ STACK RANKED
      ▲                                                              │
-     └──── write: one field always, order only on explicit Apply ───┘
+     └──── write: score field always; order on Apply ───────────────┘
 ```
 
-**Read-heavy:** mirror tickets continuously (webhook + periodic reconcile). The tracker is the system of record for the *ticket*.
+**Read-heavy:** mirror tickets continuously (webhook + periodic reconcile). The tracker remains the system of record for the *ticket*; we own only the *order*.
 
-**Write-narrow:** two write paths, deliberately asymmetric.
-1. **Stack Score → a single custom field.** Continuous, idempotent, safe. Makes the ranking visible where people already work and is the main reason a PM keeps the integration on.
-2. **Backlog order.** *Only* on an explicit, previewed, reversible **Apply**. Never automatic, never on a schedule. Reordering someone's sprint backlog without them asking is the single fastest way to get uninstalled.
+**Write-narrow:** two paths.
+1. **Stack Score → one custom field.** Continuous, idempotent, safe.
+2. **Backlog order.** Default: explicit, previewed, reversible **Apply**. Because there's a single owner, also offer **auto-apply** as an opt-in setting — some POs will want the tracker to just always reflect the ranked order, and with nobody else's drag-and-drop to stomp on, that's a legitimate choice. Never the default; always reversible.
 
-**Drift handling:** record the exact order at Apply time. If the tracker's order has changed since, don't overwrite silently — show the diff:
+**Drift handling:** snapshot the exact order at Apply. If the tracker has changed since, show a diff rather than silently overwriting:
 
 > Since your last Apply, 4 items were reordered in Linear. [View diff] [Apply anyway] [Re-seed from Linear]
-
-Never fight a human's drag-and-drop. Surface it, let them choose.
 
 ---
 
 ## Linear (build first)
 
-Better API, far less enterprise configuration surface, and the design-partner population skews Linear. Ship this first.
+Better API, no LexoRank, far less config surface, and the early-adopter population skews Linear.
 
-**Auth:** OAuth2, `read` + `write` scopes, `actor=app` so writes are attributed to Stack Ranked rather than impersonating a user. **[SPIKE]** confirm scopes needed for issue update and for reading team/project/label metadata.
+**Auth:** OAuth2, `read` + `write`. **[SPIKE]** exact scopes for issue update and for reading team/project/label metadata.
 
-**API:** GraphQL. One query gets everything we need per issue:
+**API:** GraphQL. One query covers the mirror:
 
 ```graphql
 issues(filter: $filter, first: 100, after: $cursor) {
@@ -42,7 +48,7 @@ issues(filter: $filter, first: 100, after: $cursor) {
     id  identifier  title  description  priority  estimate  sortOrder
     createdAt  updatedAt
     state { name type }  team { id key }  project { id name }
-    labels { nodes { name } }  creator { id email }  assignee { id email }
+    labels { nodes { name } }  creator { id email }
   }
   pageInfo { hasNextPage endCursor }
 }
@@ -52,105 +58,76 @@ issues(filter: $filter, first: 100, after: $cursor) {
 
 | Linear | Stack Ranked | Notes |
 |---|---|---|
-| `id` | `items.external_id` | Stable; `identifier` (ENG-123) is display-only |
-| `priority` (0–4) | cold-start prior | 0 = none, 1 = urgent … 4 = low. Note the inversion. |
-| `estimate` | effort prior, duel card chip | Present only if the team enabled estimates |
-| `sortOrder` (float) | cold-start prior, Apply target | Fractional ordering — insert between neighbors by averaging |
-| `labels`, `project`, `team` | ladder filters, comparability | |
-| `state.type` | lifecycle | `completed`/`canceled` → freeze the item, keep its history |
+| `id` | `items.external_id` | Stable; `identifier` (ENG-123) is display only |
+| `priority` (0–4) | cold-start seed | 0 = none, 1 = urgent … 4 = low. Note the inversion |
+| `estimate` | duel-card chip | Only if the team enabled estimates |
+| `sortOrder` (float) | cold-start seed, Apply target | Fractional — insert between neighbors by averaging |
+| `labels`, `project`, `team` | list filters, comparability | |
+| `state.type` | lifecycle | `completed`/`canceled` → freeze item, keep its comparisons |
 
-**Write-back:** `issueUpdate` mutation. `sortOrder` is a float, so reordering is just assigning values between neighbors — much easier than Jira's LexoRank. Stack Score goes into a custom field if available, otherwise a maintained comment or a structured line in the description. **[SPIKE]** verify current custom-field support on the plan tiers our design partners use; this determines whether write-back path #1 is clean or hacky.
+**Write-back:** `issueUpdate`. `sortOrder` being a float makes reordering trivial — assign values between neighbors. **[SPIKE]** custom-field support on the plan tiers our users are on; determines whether the Stack Score path is clean or needs a maintained comment.
 
-**Webhooks:** subscribe to Issue create/update/remove. HMAC-signed with a per-integration secret — verify every delivery, reject unsigned. **[SPIKE]** confirm header name and signature scheme.
+**Webhooks:** Issue create/update/remove, HMAC-signed. Verify every delivery; reject unsigned. **[SPIKE]** header name and signature scheme.
 
-**Rate limits:** complexity-based, not request-count-based. **[SPIKE]** get current numbers. Design for it regardless: batch queries, respect `Retry-After`, never fan out per-item requests when a filtered bulk query works.
+**Rate limits:** complexity-based. **[SPIKE]** current numbers. Design for it regardless: bulk filtered queries, respect `Retry-After`, never fan out per-item.
 
 ---
 
-## Jira (Phase 2 — where the money is)
+## Jira (Phase 2)
 
 Bigger market, meaningfully more work. Don't let it block Phase 1.
 
-**Auth:** OAuth 2.0 (3LO) for Jira Cloud. **[SPIKE]** decide 3LO vs. a **Forge** app. Forge gets marketplace distribution, in-product UI panels, and Atlassian-hosted trust — but constrains runtime and adds a review cycle. Rough lean: 3LO first for design partners, Forge later for distribution. Jira Server/Data Center is explicitly out of scope.
+**Auth:** OAuth 2.0 (3LO) for Jira Cloud. **[SPIKE]** 3LO vs. **Forge** — Forge gets marketplace distribution and Atlassian-hosted trust but constrains runtime and adds review cycles. Lean: 3LO for early users, Forge later for distribution. Server/Data Center explicitly out of scope.
 
-**APIs:** REST v3 for issues and fields; **Agile API** for ranking.
-
-**Ranking is the hard part.** Jira's backlog order is LexoRank, stored in a customfield whose ID varies per instance (`customfield_10019`-ish). Don't compute LexoRank strings by hand — use the endpoint:
+**Ranking is the hard part.** Backlog order is LexoRank in a customfield whose ID varies per instance. Don't compute LexoRank strings by hand:
 
 ```
 PUT /rest/agile/1.0/issue/rank
 { "issues": ["ENG-1","ENG-2"], "rankBeforeIssue": "ENG-7" }
 ```
 
-Applying a full reorder is therefore a *sequence* of relative moves, not a bulk assignment. Implications: it's slow for large ladders, it's not atomic, and a partial failure leaves a half-applied order. **Apply must be chunked, resumable, idempotent, and snapshot the prior order first so Undo is real.** **[SPIKE]** batch-size limits and behavior under partial failure.
+A full reorder is therefore a *sequence of relative moves* — slow for large lists, not atomic, and a partial failure leaves a half-applied order. **Apply must be chunked, resumable, idempotent, and snapshot the prior order so Undo is real.** **[SPIKE]** batch limits and partial-failure behavior.
 
-**Stack Score:** create a number custom field on install; write continuously. **[SPIKE]** field creation via API vs. requiring an admin to make it manually — affects onboarding friction a lot.
+**Scoping:** a list maps to **JQL**, which fits perfectly — POs already have saved filters defining exactly the slice they care about. (Linear filters play the same role.)
 
-**Scoping:** a ladder maps to **JQL**, which is an excellent fit — PMs already have saved filters that define exactly the slice they care about. (Linear filters play the same role.)
+**Webhooks:** **[SPIKE]** dynamic registration under 3LO has historically been limited. **Build the polling reconciler regardless** (`updated > cursor`, every 5 min) — it's the necessary backstop for missed webhooks on both providers anyway.
 
-**Webhooks:** **[SPIKE]** dynamic registration under 3LO has historically been limited. Build a **polling reconciler regardless** (`updated > last_cursor`, every 5 min) — it's needed as a backstop for missed webhooks in both providers anyway, so it's not wasted work.
-
----
-
-## Slack (ship with Phase 1 — this is the main client)
-
-Not an add-on. Most voting happens here; the web app is for deciding.
-
-- **Duel card** — Block Kit with two primary buttons and an overflow for tie / need-context / skip. Ack within 3s, then `response_url` to swap in the next duel. Five cards per session, in-place.
-- **`/stackrank`** — `request`, `duel`, `status`, `challenge ENG-123`.
-- **Daily DM** — scheduled per-user in their local timezone, from Slack profile TZ.
-- **Channel posts** — upsets, challenge resolutions, weekly ladder summary. Never DMs for these.
-- **App Home** — your streak, your open challenges, your requests and where they sit.
-- **Auth:** Slack OAuth; map identity by email to tracker accounts.
-
-Block Kit's constraint — a handful of short text lines and a couple of buttons — is a **feature**. It forces the duel card to stay glanceable, which is exactly the discipline the format needs.
+**Stack Score:** number custom field. **[SPIKE]** creatable via API, or does an admin do it manually? Affects onboarding friction a lot.
 
 ---
 
-## Identity mapping (an underrated problem)
+## Slack (Phase 2 — nudge only)
 
-Sales and Support are among the most valuable voters and **frequently have no Jira or Linear seat.** If voting requires a tracker account, we lose half the signal that makes the product multiplayer.
+Not the client. Its whole job is the maintenance loop:
 
-```
-person
-  ├─ slack_user_id        ← primary for voting
-  ├─ tracker_account_id   ← optional
-  ├─ email                ← the join key
-  └─ role                 ← drives weight + role aggregation in the disagreement map
-```
+- **Daily nudge** — *"Your list is 84% confident. 6 duels to get back to 90%."* with a deep link into the web app, plus inline duel cards for people who want to tap in place.
+- **Intake** — `/rank request` opens a form; the item lands in Unplaced. This is the one genuinely multiplayer surface, and it stays multiplayer: anyone can file, only the PO ranks.
+- **Notify requesters** when their item is placed.
 
-Match by email, with manual reconciliation for mismatches (work vs. personal, aliases, SSO quirks). Support **invited voters** who exist only in Slack: weight below 1.0 until they build a history, admin-approved, capped per ladder.
-
-Roles (`pm`, `eng`, `design`, `sales`, `support`, `exec`, `other`) are set by the admin. They drive vote weights *and* the per-role aggregation in the disagreement map — which is the output Priya cares most about, so getting roles right at onboarding matters more than it looks.
+Block Kit is fine for 5 maintenance duels. It is *not* fine for a ~180-duel onboarding session — that needs keyboard shortcuts and a real layout ([01](01-product-spec.md)).
 
 ---
 
 ## Security & data handling
 
-Ticket contents are customer-sensitive (deal names, ARR, incident details, occasionally PII in descriptions).
+Ticket contents are customer-sensitive (deal names, ARR, incident details, occasionally PII).
 
-- **Token storage:** encrypted at rest with envelope encryption (KMS), never logged, never in error payloads. Automatic refresh with backoff; a revoked token pauses the connection and notifies the admin rather than retrying forever.
-- **Scopes:** minimum viable. If read-only gets us through onboarding, request write scopes later, at the moment of first Apply — a much easier ask once the tool has proven useful.
-- **Retention:** mirror only the fields in the mapping table. Don't store attachments or comment bodies. Deleted upstream → soft-delete locally, **keep the comparison history** (it's ours, it's aggregate, and deleting it would corrupt the model) but scrub title and description.
-- **Tenancy:** every row carries `org_id`; enforce at the query layer, not by convention. Postgres RLS is worth the setup cost here.
-- **Webhook verification:** signature-verified on every delivery, both providers, no exceptions.
-- **Audit log:** every Apply, every override, every weight change, every role change — who, when, before, after.
-- **Egress:** no ticket content to third parties. If LLM summarization for duel cards ships ([01](01-product-spec.md)), it must be opt-in per org, disclosed, with a no-training guarantee and a documented provider. Several design partners will ask about this in the first call; have the answer ready.
+- **Tokens:** envelope-encrypted at rest (KMS), never logged, never in error payloads. Refresh with backoff; a revoked token pauses the connection and notifies rather than retrying forever.
+- **Scopes:** minimum viable. If read-only carries onboarding, request write scopes at the moment of first Apply — a far easier ask once the tool has proven useful.
+- **Retention:** mirror only the mapped fields. No attachments, no comment bodies. Deleted upstream → soft-delete, **keep the comparisons** (they're ours and deleting them corrupts the model) but scrub title and description.
+- **Tenancy:** every row carries `org_id`, enforced at the query layer via Postgres RLS, not by convention. Cheap now, painful to retrofit — and necessary anyway for [08](08-multiplayer-later.md).
+- **Webhooks:** signature-verified on every delivery, no exceptions.
+- **Egress:** no ticket content to third parties. If LLM summarization for duel cards ships ([01](01-product-spec.md)), it's opt-in, disclosed, with a documented provider and a no-training guarantee. Expect this question on the first call.
 
 ---
 
-## Spike checklist (week 1 of Phase 1, timeboxed to 3 days)
+## Spike checklist (week 1, timeboxed to 2 days)
 
-Every item below is a schedule risk. Answer them before committing to dates.
+Smaller than the multiplayer version — no Slack, no identity mapping.
 
-- [ ] Linear OAuth end-to-end: install, token refresh, `actor=app` attribution
-- [ ] Linear rate limits: real numbers, and what a 200-item ladder sync actually costs
-- [ ] Linear custom fields: available? on which plans? writable via API?
-- [ ] Linear webhook signature scheme; delivery reliability under load
-- [ ] `sortOrder` write-back: reorder 50 items, confirm no fractional-precision collisions
-- [ ] Jira: 3LO vs. Forge decision, with the distribution tradeoff written down
-- [ ] Jira `/issue/rank`: batch limits, partial-failure behavior, time to reorder 100 issues
-- [ ] Jira custom field creation via API, or admin-manual?
-- [ ] Jira webhooks under 3LO — available, or is polling the only path?
-- [ ] Slack: 3s ack + `response_url` swap feels instant on mobile with a real duel card
-- [ ] Identity: what fraction of a design partner's stakeholders have no tracker seat? *(This number decides how much invited-voter infrastructure Phase 1 needs.)*
+- [ ] Linear OAuth end-to-end: install, token refresh
+- [ ] Linear rate limits: real numbers; cost of syncing a 300-item backlog
+- [ ] Linear custom fields: available? which plans? writable via API?
+- [ ] Linear webhook signature scheme
+- [ ] `sortOrder` write-back: reorder 100 items, confirm no fractional-precision collisions
+- [ ] Seed quality: does `priority` + `sortOrder` produce a *usable* starting order, or is real-world `sortOrder` effectively random below the top 20? **This one matters most** — the §5 cold-start seed and the first-session payoff both depend on it

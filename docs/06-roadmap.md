@@ -1,114 +1,109 @@
 # 06 — Roadmap
 
-## Phase 0 — Validate (1–2 weeks, no code)
+Single-player shortens this considerably. Phase 1 drops Slack, identity mapping, vote weights, consensus, and the batch scoring system — roughly two weeks of work removed, and the riskiest coordination problem removed with it.
 
-These docs are most of it. The rest:
+## Phase 0 — Validate (1 week, no code)
 
-**Five design-partner conversations.** PMs at 20–300 person orgs on Jira or Linear. Not demos — interrogations. Specifically:
-- Show them their own backlog and ask them to rank the top 15 from memory. Then ask two colleagues. **Measure the disagreement.** If three people produce roughly the same list, this org doesn't need the product and neither do the others like it.
-- "How was the last real prioritization decision actually made?" Listen for the meeting, the escalation, the loudest voice.
-- "Who has an opinion that never makes it into the room?"
+The validation questions changed completely. The multiplayer version needed to prove *stakeholders disagree*. This one needs to prove **one person's judgment differs from what their tracker already says, and that extracting it is pleasant.**
 
-**A paper prototype of the duel card.** Twenty real pairs from their real backlog, in Figma or literally on cards. Watch them answer. This tests the single riskiest assumption in the product: *is a duel answerable in six seconds with only what fits on a card?* If they keep saying "I'd need to know more" — that's the finding, and it changes the design before anything is built.
+**Run one backlog by hand.** Take a real PO's real backlog (60ish items). Export it. Run ~200 duels with them in a spreadsheet or a throwaway script over a single sitting — deliberately past the ~180 target, to find where the fatigue cliff is. Fit Bradley–Terry. Then show them the diff against their stored order.
 
-**A hand-run ladder.** Pick a partner, take 40 of their tickets, run comparisons by hand in Slack for a week, compute the Bradley–Terry fit in a spreadsheet or a throwaway script. Show them the result and the disagreement map. This is a week of work and it validates or kills the entire thesis before engineering starts.
+This is a day of work and it tests almost everything at once:
+- **Will they sit for ~180 duels?** Watch where they flag, get bored, or ask to stop. The answer determines whether the onboarding session is viable at all.
+- **Is a duel answerable in ~5 seconds from a card?** The riskiest UX assumption. Listen for "I'd need to know more" — if that's frequent, the whole design changes.
+- **Does the result differ from their Jira order?** If the settled list matches what was already stored, the product has no reason to exist. **This is the make-or-break number.**
+- **Do they trust the output?** Watch their face at the diff. "Huh, that's actually right" vs. "no, that's wrong, Audit log isn't #6."
 
-**Exit criteria:** at least 3 of 5 partners show real internal disagreement, at least 2 commit to a pilot, and the paper duel test clears 70% answered-without-hesitation.
+**Then three more, lighter.** Just the diff test — seed, ~180 duels, show the divergence. Enough to know whether the first result was a fluke.
+
+**Exit criteria:** ≥3 of 4 POs complete a ~180-duel session without being pushed, median duel time under 8s, and seed-vs-settled divergence above ~25% of items with the PO endorsing the new order over the old one.
 
 ---
 
-## Phase 1 — MVP (6 weeks)
+## Phase 1 — MVP (4 weeks)
 
-**Thesis under test: will people actually vote, and is the resulting order good enough to change a decision?**
+**Thesis under test: will a PO sit for the session, and is the resulting list better than their tracker's?**
 
-Scope, Linear only:
+Linear only, web only.
 
 | Week | Deliverable |
 |---|---|
-| 1 | **Simulation harness + scoring engine.** BT/MM, prior, bootstrap, Elo, settled metric, selection policies. Fully validated offline, no UI. |
+| 1 | **Simulation harness + scoring engine.** BT/MM, prior, bootstrap, decay, confidence metric, pair selection. Validated offline, no UI. |
 | 2 | Linear OAuth + sync (webhook + reconciler). Spike checklist from [04](04-integrations.md) cleared. |
-| 3 | Ladder model, duel queue generation, vote API, ladder view (web). |
-| 4 | **Slack app:** duel cards, daily DM, `/stackrank`, App Home. The real client. |
-| 5 | Intake flow (request → place → provisional rank), challenge flow, streaks, progress bar. |
-| 6 | Stack Score write-back, ladder admin, onboarding, internal dogfood on our own backlog. |
+| 3 | **The duel session.** Keyboard-first, resumable, progress bar, tiers, placement + cutline + audit selection. The thing everything else exists to serve. |
+| 4 | List view, cut line, unplaced queue, seed-vs-settled diff, Stack Score write-back, onboarding. Dogfood on our own backlog. |
 
-**In scope:** one axis (Ship First), tiers, insertion + infogain + cutline + audit selection, BT with weights/decay/ties, bootstrap CIs, cut line, upsets, streaks, settled %, Slack voting, score write-back.
+**In scope:** one list per user, seeded cold start, ~180-duel onboarding session, placement duels, maintenance duels, decay + confidence, bootstrap CIs, cut line, unplaced queue with one-tap `Never`, the diff, score write-back.
 
-**Explicitly out:** Jira, effort ladders, disagreement map, order write-back, seasons, calibration scores, email, public API, mobile app, SSO beyond Slack/Linear OAuth.
+**Explicitly out:** Jira, Slack, multiplayer anything, effort ladders, order write-back (score field only), pins, streaks, email, API, mobile.
 
-The disagreement map is the most exciting feature and it is **correctly cut from Phase 1**. It needs voting volume across roles to say anything, and voting volume is precisely what Phase 1 exists to prove. Building it first would produce a beautiful visualization of eleven data points.
+Note what moved *out* of Phase 1 versus the multiplayer plan: Slack was the primary client and is now Phase 2, which is most of a week back. Note what moved *in*: the onboarding session got promoted from a feature to the centerpiece and gets a full week.
 
-**Ship to 2–3 design partners in week 6.** Run for 4 weeks before building anything else.
+**Ship to 3–4 POs in week 4.** Run 3 weeks before building anything else.
 
 ---
 
-## Phase 2 — Make it decision-grade (6–8 weeks)
+## Phase 2 — Make it stick (4–6 weeks)
 
-Gated on Phase 1 engagement holding up. In rough priority order:
+Gated on Phase 1 retention. Rough priority:
 
-1. **Disagreement map** — per-role ratings, split index, auto-generated "contested items" meeting agenda. The feature that makes a PM pay.
-2. **Jira** — 3LO, sync, JQL ladders, rank write-back. Market expansion; the biggest single engineering chunk.
-3. **Order write-back with preview + Undo** — chunked, resumable, snapshotted, drift-aware.
-4. **Effort ladders** — engineers-only, pairwise sizing, derived Value ÷ Effort.
-5. **Overrides** — PM re-placement with recorded reason, shown beside the model's answer.
-6. **Seasons + recap.**
-7. **Weekly email digest** — reaches voters who ignore Slack apps, and execs.
+1. **Order write-back** with preview, Undo, drift detection, and opt-in auto-apply. The thing that makes the ranking real rather than a parallel universe.
+2. **Slack** — daily nudge, inline maintenance duels, `/rank request` intake. The first genuinely multiplayer surface: anyone files, only the PO ranks.
+3. **Jira** — 3LO, sync, JQL lists, rank write-back. The market expansion, and the biggest single chunk.
+4. **Multiple lists** per user, with cross-list handling.
+5. **Pins** — declare a position the model can't know about.
+6. **Effort lists** — pairwise sizing, derived Value ÷ Effort. Strong feature; needs the core loop proven first.
+7. Streaks, movers, self-consistency display.
 
 ---
 
-## Phase 3 — Make it defensible (ongoing)
+## Phase 3 — Beyond one player
 
-- **Outcome feedback loop** — did highly-ranked shipped items deliver? This is what turns calibration scoring from a popularity contest into something real, and it's the long-term moat: nobody else has the paired ranking-and-outcome data.
-- Per-voter noise estimation (EM) — automatic, non-political down-weighting of unreliable voters.
-- Public API + webhooks.
-- Forge app for Atlassian Marketplace distribution.
-- Customer-facing ladders (a different abuse model; treat as a separate product decision).
-- SOC 2, SSO/SCIM — required to sell above ~300 people.
+- **[08](08-multiplayer-later.md)** — invite stakeholders, consensus, disagreement map. The natural expansion and the reason `voter_id` is already in the schema. Only after single-player retention is proven; doing it earlier reintroduces every problem this scope cut removed.
+- Outcome feedback — did highly-ranked shipped items deliver?
+- Public API, Forge marketplace app, SOC 2 / SSO.
 
 ---
 
 ## Success metrics
 
-**Phase 1 (the only ones that matter):**
+**Phase 1 — the only ones that matter:**
 
 | Metric | Target | Why |
 |---|---|---|
-| Weekly active voters / invited | **> 50%** at week 4 | Below this it's a single-player tool and the ranking is one person's opinion with extra steps |
-| Sessions per voter per week | **> 3** | The habit exists or it doesn't |
-| Median time per duel | **4–8s** | Faster = tapping blind; slower = cards lack context |
-| Session completion rate | **> 80%** | Validates the 5-duel cap |
-| Time to first settled ladder | **< 14 days** | The [02 §1](02-ranking-model.md) feasibility argument, tested |
-| Audit-set accuracy | **> 75%** | The ladder measures something coherent |
-| **Decision changed** | **≥ 1 per partner** | The real one — see below |
+| **Onboarding completion** | **> 60%** finish a full session | The centerpiece works or it doesn't |
+| Median duel time | **4–8s** | Faster = tapping blind; slower = cards too thin |
+| Abandonment position | **no cliff before ~150** | A cliff at 70 means the session must be shorter |
+| **Seed-vs-settled divergence** | **> 25% of items move** | Below this the tracker order was already fine |
+| Audit-set accuracy | **> 80%** | One voter should be self-consistent; lower means incoherent list or thin cards |
+| Return within 14 days | **> 50%** | Decay-driven maintenance works or it's a one-shot utility |
+| Unplaced queue cleared | **> 70%** within a week of arrival | Triage-as-taps actually beats triage-as-chore |
 
-**The qualitative metric that outranks all of them:** in the week-4 interview, can the PM name a specific decision they made differently because of the ladder? If every partner says "it confirmed what I already thought," the product is a very well-engineered toy, and we should say so.
+**The qualitative metric that outranks all of them:** at the week-3 interview, does the PO say the new order is *better* than what they had — and can they name an item whose position genuinely surprised them? If everyone says "it basically matched my gut," this is a well-engineered toy.
 
-**Counter-metrics** (watch for the product going wrong):
-- `need_context` rate rising → cards are too thin, or ticket hygiene is worse than we assumed
-- time-per-duel falling below 2s → gamification is producing noise; pull a mechanic
-- votes concentrated in 1–2 people → not multiplayer, ranking is capturable
-- cycle ratio rising → ladders are incoherent, push splitting harder
+**Counter-metrics:**
+- time-per-duel falling below 2s → tapping blind; shorten the session
+- accuracy decaying through sessions → fatigue; cap it
+- `skip` rate rising → cards too thin, or the list is incoherent
+- nobody returns after onboarding → decay isn't creating a reason to come back; the product is a utility, not a habit
 
 ---
 
-## Scope cuts, in the order I'd take them
+## Scope cuts, in order
 
-If Phase 1 runs long, cut in this sequence:
+1. Tiers → **defer.** Costs ~2 extra taps per placement; not fatal at N ≤ 150.
+2. Bootstrap CIs → ship point estimates, keep a cheap σ for confidence.
+3. Maintenance duels → **defer.** Onboarding + placement alone tests the core thesis.
+4. Unplaced queue → **defer.** Onboarding alone is the Phase 1 story.
+5. Cut line → **defer** as a UI element, but **keep the cut-line-focused pair selection** — that's what makes the budget work.
 
-1. Web ladder view → **read-only, ugly**. Slack is the product in Phase 1.
-2. Challenge flow → **defer**. Intake + daily duels prove the thesis alone.
-3. Streaks and upsets → **defer**. The progress bar is the mechanic that matters.
-4. Tiers → **defer**. Costs ~2 extra taps per insertion; not fatal at N ≤ 60.
-5. Bootstrap CIs → **ship point estimates**, keep settled % (needs a cheap σ; use the analytic Fisher-information approximation as a stopgap).
-
-**Never cut:** the simulation harness (week 1), the audit set (12% random duels), append-only comparisons, the "no rank shown on the duel card" rule. Each of those is load-bearing for correctness or credibility, and each is far more expensive to retrofit than to build.
+**Never cut:** the simulation harness (week 1), the audit set, append-only comparisons, `voter_id` in the schema, keeping `seed_order` forever, and the "no rank shown on the duel card" rule. Each is load-bearing for correctness or credibility, and each is far more expensive to retrofit than to build.
 
 ---
 
 ## What not to build, ever
 
-- **An LLM that prioritizes for you.** The pitch is *human judgment, efficiently elicited*. A model guessing at priority is the thing being replaced. LLMs summarize duel cards and cluster duplicate requests; they don't vote.
-- **A ticket tracker.** We mirror. The moment we store work state we're competing with Jira on Jira's turf.
-- **Our own auth/SSO.** Buy it.
-- **A public voting portal (v1).** Different abuse model, different buyer, different product.
-- **Deep RICE-style decomposition.** Separate Reach/Impact/Confidence ladders multiply duels 3–4× and reimport exactly the ambiguity we exist to remove.
+- **An LLM that prioritizes for you.** The pitch is *your judgment, efficiently elicited*. A model guessing at priority is the thing being replaced. LLMs summarize cards and spot duplicates; they don't rank.
+- **A ticket tracker.** We mirror. Storing work state means competing with Jira on Jira's turf.
+- **Our own auth/SSO.** The tracker OAuth is the login.
+- **Deep RICE-style decomposition.** Separate Reach/Impact/Confidence lists multiply duels 3–4× and reimport exactly the ambiguity we exist to remove.

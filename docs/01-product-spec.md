@@ -1,202 +1,169 @@
 # 01 — Product Spec
 
-## Personas
+> Scope: one PO owns the list. Everyone else can *file*, nobody else *ranks*.
 
-| Persona | Role | What they want | How often they touch it |
-|---|---|---|---|
-| **Priya — PM** (owner/buyer) | Owns a product area and its backlog order | To walk into planning with evidence instead of opinions; to stop relitigating the same three features | Daily-ish in the web app; runs the ladder |
-| **Sam — AE, Sales** (requester/voter) | Files feature requests on behalf of deals | His deal-blocking request to actually go somewhere; to know where it stands without asking Priya | 30 seconds/day in Slack; never opens Jira |
-| **Devon — Eng Lead** (voter/skeptic) | Delivers the work, has the cost model | Effort reality to enter the conversation before commitments are made | A few minutes/week; deeply skeptical of "gamified" anything |
-| **Ana — Head of Product** (consumer) | Oversees several areas | Cross-team visibility; to see where orgs disagree before it becomes a conflict | Weekly; reads, rarely votes |
+## The user
 
-**Design consequence:** Sam and Devon will never come to the web app. If the voting experience isn't inside Slack, the product has one user, and one user cannot produce a multiplayer ranking. Slack is not a "nice-to-have integration"; it is the primary client.
+**Priya — Product Owner.** Owns 50–400 live items in Linear or Jira. Can rank her top 10 honestly; below that the order is inherited guesswork. Gets ~10 inbound requests a week from sales, support, and engineering, which she triages by feel and mostly defers. Dreads grooming. Has to justify the order in planning and currently does it from memory and conviction.
+
+She is the buyer, the user, and the only voter. Every design decision optimizes for her sitting down voluntarily.
+
+**Secondary (non-ranking):** requesters — anyone who files. They get a lightweight intake form and a notification when their item lands. They never see a duel.
 
 ## Core objects
 
-- **Ladder** — a scoped ranked list. Defined by a filter over the tracker (a Linear filter or Jira JQL), plus an *axis*, a roster of voters with weights, and a season. Typically 20–150 items. **The most important design constraint in the product: you never rank the whole backlog.** Comparing an infra chore to a marketing landing page is not a question anyone can answer, and asking it produces noise that pollutes the model.
-- **Item** — a mirror of a Jira/Linear ticket, plus derived state (tier, rank, score, uncertainty, disagreement index).
-- **Duel** — one presented pair, awaiting a response. Has a *reason for existing* (insertion / information gain / cut-line / challenge / audit) which is recorded, because it changes how the response should be weighted and lets us audit selection bias.
-- **Comparison** — the immutable recorded outcome of a duel.
-- **Request** — an intake artifact: a problem statement, evidence, and a requester. Becomes an Item once placed.
-- **Season** — a bounded period (usually a quarter). Rankings carry over with decayed confidence; the season gives a natural moment to re-validate and to recap.
-- **Override** — a PM's explicit re-placement of an item, with a required reason, recorded and displayed alongside the model's position.
+- **List** — the ranked backlog. Defined by a tracker filter (Linear filter / Jira JQL), plus a capacity for the cut line. One PO may own several (one per product area); each is independent.
+- **Item** — a mirrored ticket + derived state (tier, rank, score, confidence).
+- **Duel** — one presented pair. Records *why* it was asked (placement / cut-line / staleness / audit), which matters for tuning and honest measurement.
+- **Comparison** — the immutable outcome of a duel.
+- **Unplaced queue** — items synced from the tracker that have never been ranked. The app's main call to action.
+- **Pin** — the PO declaring a position directly ("this is #1 because legal says so"), overriding the model.
 
-## Axes
+## Why not just drag things in Jira?
 
-A ladder ranks on exactly one axis. Two ship in scope:
+The question the product must answer in its first thirty seconds. The answer:
 
-- **Ship First** (default) — *"Which should we ship first?"* This deliberately bundles value, urgency, and cost, because that's the actual decision. One question, no decomposition, minimal cognitive load.
-- **Effort** — *"Which is the bigger build?"* Answered by engineers only. Pairwise relative sizing is strictly easier and more accurate than story points, and it gives us a cost dimension for free.
+> Dragging requires you to know what's already at rows 40–60. Comparing two items doesn't.
 
-With both, `Value ÷ Effort` yields a defensible priority score with no one ever having typed a number. This is RICE's output without RICE's fiction. **Effort is a Phase 2 feature** — ship the single-axis version first and confirm people will vote at all.
+Everything below follows from that one sentence. If a screen ever asks Priya to hold more than two items in her head at once, it's wrong.
 
-Deliberately *not* shipping: separate Reach / Impact / Confidence ladders. Decomposition multiplies the number of duels by 3–4× for a marginal accuracy gain, and it reintroduces the "what does Impact mean" ambiguity we're trying to escape.
+## The three loops
 
-## The four loops
+### 1. Onboarding — rank the backlog in one sitting
 
-### 1. Intake loop — "pay to play"
-
-Anyone can request a feature. But a request does not enter the backlog by being typed; **it enters by being placed.**
+The signature experience, and the thing single-player makes possible.
 
 ```
-Sam: /stackrank request
-  → form: What's the problem? Who's affected? Evidence? (links, deal, ticket)
-  → dedupe check (embedding similarity against existing items; "Is this the same as FEAT-231?")
-  → coarse tier: Now / Next / Later
-  → 4–6 duels against existing items in that tier (binary insertion)
-  → "FEAT-902 entered the Q3 Growth ladder at #14 of 61. Priya has been notified."
+Connect Linear → pick a filter → 61 items found
+  → seed the order from Linear's existing rank + priority  ("Seeded, 0% confident")
+  → "Rank your backlog: ~180 duels, about 15 minutes. You can stop anytime."
+  → [duel] [duel] [duel] ... progress bar climbing
+  → SETTLED. And the payoff:
+
+     ┌──────────────────────────────────────────────────────┐
+     │  Your stored order and your judgment disagree on      │
+     │  34 of 61 items.                                      │
+     │                                                       │
+     │  9 items you had below the cut line belong above it.  │
+     │  Biggest mover:  Audit log        #38 → #6            │
+     │  Biggest drop:   Dashboard v2     #4  → #29           │
+     │                                    [See the diff] →   │
+     └──────────────────────────────────────────────────────┘
 ```
 
-This is the single most important design decision in the product. It:
-- makes the requester experience the tradeoff (you want this above the SSO work? *really?*),
-- yields a provisional rank immediately instead of the silence that makes requesters feel ignored,
-- generates ~5 comparisons of fresh signal from someone who was previously just noise in a Slack channel,
-- and costs the PM nothing.
+This is the whole first-session value proposition and it's essentially free — it falls out of comparing the seeded order to the settled one ([02 §5](02-ranking-model.md)).
 
-Total time for Sam: ~90 seconds. Compare to today, where he pastes into #product-requests and it evaporates.
+Design requirements for the session to survive ~180 duels:
+- **Resumable at any point.** Progress saved per tap. "Stop anytime" must be true, and the partial result must already be useful.
+- **Visible progress with a real finish line**, driven by confidence, not raw count.
+- **Ramping difficulty.** Early duels are wide-apart, obvious, fast — building momentum. Later ones narrow toward the cut line.
+- **No timer, no streak pressure, no interruption.** This is a focused sitting, not a habit moment.
 
-### 2. Daily duel loop — the habit
+### 2. Intake — triage becomes taps
 
-```
-Slack DM, 9:30am local:
-  "5 duels, 30 seconds. Q3 Growth ladder is 71% settled. 🔥 12-day streak"
-  [card] [card] [card] [card] [card]
-  → "Done. Ladder moved to 74%. Your vote broke the tie on FEAT-118."
-```
-
-Constraints that make it work:
-- **Five duels, hard cap** by default. Never an infinite feed. Ending on "done" is what produces a streak; ending on fatigue is what produces churn.
-- Pairs are chosen by expected information gain, weighted toward the cut line (see [02](02-ranking-model.md)).
-- One DM per person per day maximum, in their local morning, skippable and snoozable forever from the card itself.
-
-### 3. Challenge loop — reprioritization
-
-Any item can be challenged by anyone, from the web app, Slack, or a Jira/Linear comment (`/stackrank challenge`).
+Requests arrive from anywhere: a Slack form, a Jira ticket with a label, an email. They land in the **Unplaced queue**, not in the ranked list.
 
 ```
-Devon: "FEAT-118 is way too high — it's ranked #4 and it's a month of work."
-  → Challenge opens on FEAT-118
-  → System schedules targeted duels: FEAT-118 vs #2, #3, #6, #9 (its neighbors + the items it would displace)
-  → Those duels go out to the ladder roster in the next daily batch
-  → 48h later: resolution. "FEAT-118 moved #4 → #11. Challenge upheld."
-     or "FEAT-118 held at #4. Challenge rejected 7–2."
+Unplaced (12)
+  → open one: problem, requester, evidence, effort if known
+  → coarse tier: Now / Next / Later / Never          ← Never = archive, one tap
+  → 4–6 duels within that tier (binary insertion)
+  → "FEAT-902 → #14 of 61. Above 'Audit log', below 'SSO for enterprise'."
 ```
 
-Challenges are the mechanism for *reprioritization* — the user's second core scenario. They're also the pressure valve that keeps the ranking from feeling imposed: if you think it's wrong, there is a defined, fast, legitimate way to contest it, and the outcome is binding-ish rather than a Slack argument.
+The reframe that makes this work: **triaging 12 requests is a dreaded queue; 12 × 5 taps is a five-minute game.** Same work, entirely different feel, and the output is a real position instead of a priority label.
 
-Rate limit: 1 open challenge per person per ladder, to prevent challenge-spam as a filibuster.
+`Never` as a one-tap archive is quietly one of the most valuable actions in the product. Backlogs grow monotonically because nothing has a cheap "no." This gives it one.
 
-### 4. Decision loop — what Priya actually does
+### 3. Maintenance — two minutes a day
 
-Weekly, or before planning:
+Confidence decays ([02 §3.4](02-ranking-model.md)), so the list knows which parts have gone stale without anyone tracking it.
 
 ```
-Open ladder → see order, cut line, contested items, what moved since last week
-  → resolve the 3 contested items (10-minute agenda, with the disagreement data on screen)
-  → override where she has information the ladder doesn't ("legal requires this by Nov"), with a reason
-  → Preview & Apply → order written back to Linear/Jira, reversible
+"Your list is 84% confident. 6 duels to get back to 90%."
+  → 6 duels, mostly around the cut line and on items that haven't
+    been compared since the list changed under them
+  → done
 ```
+
+The decay is what makes this loop exist at all. Without it there's no reason to open the app on day 40, and the product is a one-shot utility. With it, the list gently asks for attention proportional to how much the backlog actually moved.
+
+### Decision moment (not a loop — a destination)
+
+Before planning: open the list, see the cut line, see what moved since last week, pin anything the model can't know ("legal requires this by Nov"), hit **Apply** to write the order back to the tracker.
 
 ## Screens
 
-### The Duel card (the product's atomic unit)
+### The Duel card — the atomic unit
 
-Everything depends on this card. If it takes more than ~6 seconds to answer, the loop dies. If it has too little context, the answer is noise. That tension is the central UX problem.
+If this takes more than ~6 seconds, the ~180-duel session never finishes. If it carries too little context, the answer is noise. That tension is the central UX problem of the product.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Q3 Growth ladder · duel 2 of 5                            🔥 12     │
+│  Q3 Backlog · 84 of ~180                    ▓▓▓▓▓▓▓▓▓▓▓▓░░░░░  68%   │
 │                                                                      │
-│              Which should we ship first?                             │
+│              Which ships first?                                      │
 │                                                                      │
 │ ┌───────────────────────────┐  ┌───────────────────────────┐         │
 │ │ FEAT-118                  │  │ FEAT-402                  │         │
 │ │ Bulk CSV export           │  │ SSO for enterprise tier   │         │
 │ │                           │  │                           │         │
-│ │ Ops teams re-key data by  │  │ 3 enterprise deals list   │         │
-│ │ hand every Monday; ~6h/wk │  │ SAML as a hard blocker    │         │
+│ │ Ops re-key data by hand   │  │ 3 enterprise deals list   │         │
+│ │ every Monday, ~6h/week    │  │ SAML as a hard blocker    │         │
 │ │                           │  │                           │         │
-│ │ 🏷 ops  ⏱ ~1w  👤 Sam (AE) │  │ 🏷 security ⏱ ~4w 👤 Priya│         │
-│ │ 💬 4 customers  📅 41d old │  │ 💰 $220k ARR  📅 12d old  │         │
+│ │ 🏷 ops   ⏱ ~1w            │  │ 🏷 security  ⏱ ~4w        │         │
+│ │ 👤 Sam (AE)   📅 41d      │  │ 💰 $220k ARR  📅 12d      │         │
 │ └───────────────────────────┘  └───────────────────────────┘         │
-│      [ ← This one ]                  [ This one → ]                  │
+│      [ ←  This one ]                  [ This one  → ]                │
 │                                                                      │
-│       [ Too close to call ]   [ Need context ]   [ Skip ]            │
+│        [ Too close to call ]      [ Skip ]      [ Edit ticket ]      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Card content rules:
-- **Title + one-line problem statement, never the raw description.** If the ticket has no usable summary, generate one on sync (LLM, cached, editable) or flag the ticket as un-duelable until someone writes one. This is a feature: it forces ticket hygiene, and "your ticket can't be ranked because nobody can tell what it is" is a message PMs enjoy sending.
-- **Evidence chips** are what make a judgment possible: customer count, ARR attached, requester + role, age, effort estimate if known.
-- **No rank, score, or vote counts shown.** Anchoring destroys the independence of the comparison — if I can see it's ranked #3, I'll vote for #3. This is non-negotiable and is a common mistake in similar tools.
+**Content rules:**
+- **Title + one usable line, never the raw description.** If a ticket has no summary worth reading, generate one on sync (cached, editable) or mark it un-duelable until Priya writes one. This is friction at the wrong moment *and* it's the honest answer: an item nobody can describe can't be ranked.
+- **Evidence chips** are what make judgment possible: requester, age, effort, customers, ARR.
+- **Never show rank or score on the card.** Anchoring — if she can see it's #3 she'll pick #3 and the model just re-learns its own output. This is the most common mistake in tools of this shape and it silently destroys the data.
 
-The three secondary actions are all load-bearing:
-- **Too close to call** — a genuine tie. Real information (see the tie handling in [02](02-ranking-model.md)). Without this button, indifferent people produce pure noise.
-- **Need context** — records that the card was insufficient and pings the ticket owner. Converts a frustrating dead-end into backlog hygiene.
-- **Skip** — "I'm not the right person to judge this." Also informative: an item skipped by most of the roster is in the wrong ladder.
+**Keyboard-first.** `←` `→` to pick, `space` for too-close, `s` to skip. A 180-duel session is unbearable with a mouse and genuinely pleasant with two arrow keys. This is not a nice-to-have; it's the difference between finishing and quitting.
 
-### Ladder view (web)
+**"Too close to call"** is load-bearing. Real ties are real information ([02 §3.3](02-ranking-model.md)). Without the button, indifference gets recorded as preference and the model fits noise.
+
+### List view
 
 ```
-Q3 Growth · 61 items · 74% settled · Season ends Sep 30       [Apply to Linear]
+Q3 Backlog · 61 items · 84% confident · 12 unplaced        [Apply to Linear]
 
-  #   ITEM                          SCORE  CONF   MOVE   FLAGS
-  ─────────────────────────────────────────────────────────────
-   1  SSO for enterprise tier         94    ███    —
+  #   ITEM                          SCORE  CONF   MOVE    
+  ───────────────────────────────────────────────────────
+   1  SSO for enterprise tier         94    ███    —      📌
    2  Onboarding checklist v2         91    ███    ▲2
-   3  Bulk CSV export                 88    ██░    ▼1     ⚡ contested
-   4  Usage-based billing             86    █░░    ▲7     🚨 upset
-  ─────────────────────── CUT LINE · 18 pts of 22 capacity ──────
+   3  Bulk CSV export                 88    ██░    ▼1
+   4  Usage-based billing             86    █░░    ▲7     ← low confidence
+  ──────────────── CUT LINE · 18 of 22 points ───────────
    5  Audit log                       71    ███    ▼2
-   6  Mobile push notifications       68    ██░    —      ⚡ contested
+   6  Mobile push                     68    ██░    —
    …
-
-  Contested (3)   Needs context (5)   Unplaced (2)   Stale (4)
+                                                          
+  [ 12 unplaced ]  [ 5 need a summary ]  [ 4 stale ]
 ```
 
-The **cut line** is the most important element on the screen. Rendering it converts an abstract ordering into a concrete "these four ship, these don't," which is what makes people care and what focuses the model's remaining uncertainty where it matters.
+The **cut line** is the most important element. It converts an abstract ordering into "these four ship, these don't," which is what makes the ranking worth maintaining and what tells the model where to spend the next taps.
 
-### Disagreement map
+The **confidence column** is the second most important. It's what a drag-ordered Jira backlog can never show: *which parts of this order do I actually believe?*
 
-The feature that justifies the whole product for Priya.
+### Item detail
 
-```
-FEAT-118 · Bulk CSV export
+Evidence, the comparison history (*"beat 14, lost to 3"* — with the actual pairs listed), current confidence, pin control, link to the tracker. The answer to "why is this #3" is always one click away and is always a list of taps Priya made herself.
 
-  Sales      ▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏  #2   (n=3)
-  Support    ▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏    #4   (n=2)
-  Product    ▏▏▏▏▏▏▏▏          #12  (n=2)
-  Eng        ▏▏▏               #31  (n=4)
-                              ↑ consensus #3
+### Other screens
 
-  Split index: 0.81 (top 5% most contested on this ladder)
-  Likely cause: Eng voters rank it low only in duels against items
-  they estimated as cheaper. → Effort may be the real disagreement.
-```
+- **Unplaced queue** — the main call to action, with a count badge.
+- **The diff** — seeded vs. settled order, and current vs. last-applied.
+- **Settings** — filter, capacity, decay rate, tracker connection, write-back mode.
 
-"Sales says #2, Engineering says #31" is a meeting agenda item, generated automatically, with the receipts attached. Priya walks into planning with three of these instead of a 60-item list.
+## Voice
 
-### Other screens (lower fidelity, Phase 1–2)
+Sports ladder, lightly. **Duel**, **cut line**, **unplaced**, **confident**, **stale**, **pin**. Short, present tense. Never "leverage," "align," "stakeholder."
 
-- **Item detail** — evidence, full comparison history ("beat 14, lost to 3"), who challenged it, override history, link out to the tracker.
-- **Request intake** — the form from loop 1, with live dedupe.
-- **Ladder admin** — filter definition, roster + weights, axis, tier config, capacity for the cut line, season dates.
-- **Season recap** — shipped vs. ranked, biggest upsets, most-contested calls, who was most calibrated. A shareable end-of-quarter artifact; also the natural re-engagement moment.
-
-## Surfaces
-
-| Surface | Role | Phase |
-|---|---|---|
-| **Slack** | Voting, intake, notifications, challenges. Where ~80% of all interaction happens. | 1 |
-| **Web app** | Deciding: ladder view, disagreement map, admin, apply. | 1 |
-| **Email digest** | Weekly, for voters who won't install Slack apps and for execs. | 2 |
-| **Linear/Jira** | Comment commands, a "Stack Score" field, deep links back. | 2 |
-| **PWA / mobile web** | The true Beli feel for people who want to duel on the couch. Slack covers most of this. | 3 |
-
-## Voice and copy
-
-Sports ladder, not productivity software. **Duel**, **Champion**, **Upset**, **Cut line**, **Season**, **Challenge**, **Streak**, **Settled**. Short, present tense, slightly competitive. Never "leverage," "align," or "stakeholder synergy."
-
-Emoji used with meaning, not decoration: 🔥 streak, ⚡ contested, 🚨 upset, 👑 champion, ✂️ cut line.
-
-**One hard copy rule:** the tool never says an item *is* more important, only that people *ranked* it higher. "Ranked #3 by 11 voters" — never "Priority: high." The distinction preserves the positioning in [00](00-vision.md) and keeps us honest about what a vote actually is.
+**One hard copy rule:** the tool never says an item *is* important — only that *you ranked it* there. "#3 of 61, from 23 comparisons" — never "Priority: High." That distinction is the positioning in [00](00-vision.md), and it's the difference between a tool Priya trusts and one more score she has to defend.

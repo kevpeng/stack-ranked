@@ -1,244 +1,189 @@
 # 05 — Architecture
 
-## Sizing first, so we don't over-build
+## Sizing first
 
-Per organization, realistically: ~50 ladders × ~200 items, ~20 voters, on the order of **100k comparisons per year**. A Bradley–Terry MM fit over a 200-item ladder with 10k comparisons converges in **single-digit milliseconds**; 200 bootstrap resamples is still under a second.
+One PO: ~5 lists × up to 300 items, maybe 5,000 comparisons a year. A Bradley–Terry MM fit over 300 items with 2,000 comparisons converges in **well under a millisecond**; 200 bootstrap resamples lands in ~100ms.
 
-**There is no scale problem here.** Postgres and a worker process cover it to hundreds of customers. The engineering difficulty is entirely in integrations ([04](04-integrations.md)) and in getting the loop to feel instant. Any architecture decision that trades simplicity for scale is a mistake at this stage.
+**There is no scale problem, and single-player removes the one piece of machinery that looked like one** (the online/batch scoring split — see below). The engineering difficulty is entirely in integrations ([04](04-integrations.md)) and in making a ~180-duel session pleasant. Any decision that trades simplicity for scale is a mistake.
 
----
-
-## Stack recommendation
+## Stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Web + API | **Next.js (App Router) + TypeScript** | One deploy for app and API; server components suit a read-heavy ladder view |
-| DB | **Postgres** (Neon or Supabase) | Relational data, needs transactions, RLS for tenancy |
-| ORM | **Drizzle** | Typed, thin, SQL-shaped — matters because the scoring queries are aggregate-heavy |
-| Jobs | **Inngest** (or BullMQ + Redis self-hosted) | Sync, fits, digests, scheduled DMs; durable retries are non-negotiable for webhook processing |
-| Cache / limits | **Redis** | Rate limits, session state, hot ladder reads |
-| Auth | **WorkOS** or **Auth.js** | SSO expected by the buyer; don't build it |
+| Web + API | **Next.js (App Router) + TypeScript** | One deploy; server components suit the list view |
+| DB | **Postgres** (Neon or Supabase) | Relational, transactional, RLS for tenancy |
+| ORM | **Drizzle** | Typed, thin, SQL-shaped |
+| Jobs | **Inngest** (or BullMQ + Redis) | Sync and reconcile only — *not* scoring |
+| Auth | **Auth.js** | Tracker OAuth is the login. Defer WorkOS/SSO until it's asked for |
 | Hosting | **Vercel** + managed Postgres | |
-| Scoring | **TypeScript, in the worker** | See below |
+| Scoring | **TypeScript, inline in the request** | See below |
 
-**Scoring stays in TypeScript.** The temptation is a Python service for `scipy`/`choix`. Resist it: MM for Bradley–Terry is ~30 lines of arithmetic with no matrix algebra and guaranteed monotone convergence, and the bootstrap is a loop. A second language means a second deploy, a second dependency tree, and a network hop inside the hot path — for a numerical problem that is genuinely trivial. (If we later want per-voter noise EM or a hierarchical model, revisit. Not before.)
+**Scoring stays in TypeScript and stays in-process.** MM for Bradley–Terry is ~30 lines of arithmetic with no matrix algebra and guaranteed monotone convergence; the bootstrap is a loop. A Python service for `scipy`/`choix` would add a second language, a second deploy, and a network hop inside the hot path for a numerically trivial problem.
+
+---
+
+## The simplification single-player buys
+
+The multiplayer design needed online Elo for instant feedback plus a nightly batch fit for correctness, a refit queue, and a job scheduler for scoring. **All of that is gone.**
+
+One voter's data is small enough to **refit synchronously inside the vote request, on every tap.**
+
+```
+POST vote
+  ├─ validate (list membership, duel not stale)        ~2ms
+  ├─ INSERT comparison   (append-only, never updated)  ~5ms
+  ├─ refit BT (MM, converged)                          <1ms
+  ├─ bootstrap B=200 → rank CIs, P(above cut line)    ~100ms
+  ├─ score next duel from the candidate set            ~3ms
+  └─ respond with new ranks + next duel         ◀── ~110ms total
+```
+
+What this deletes: the Elo implementation, the entire dual-system divergence bug class, the refit queue, the scoring scheduler, cache invalidation on fit completion, and every "why does the UI disagree with the API" question. **The rank shown after a tap *is* the authoritative rank.** No reconciliation, ever.
+
+If the bootstrap ever gets tight on a 300-item list, the escape hatch is to run it every 5th tap and interpolate confidence between — not to reintroduce a batch system.
 
 ---
 
 ## Services
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  Next.js app                                                   │
-│   ├─ web UI (ladder, duel, disagreement map, admin)            │
-│   ├─ /api/slack/*      interactions, commands, events          │
-│   ├─ /api/webhooks/*   linear, jira  (verify → enqueue → 200)  │
-│   └─ /api/v1/*         public API (phase 3)                    │
-└───────────────┬────────────────────────────────────────────────┘
-                │ enqueue
-┌───────────────▼────────────────────────────────────────────────┐
-│  Worker                                                        │
-│   ├─ sync.ingest         webhook → upsert item                 │
-│   ├─ sync.reconcile      every 5 min, cursor-based backstop    │
-│   ├─ score.refit         BT MAP + bootstrap → ratings snapshot │
-│   ├─ duels.generate      refresh candidate pair queue          │
-│   ├─ notify.daily        per-user local-morning DM             │
-│   ├─ notify.digest       weekly requester + ladder digest      │
-│   └─ apply.writeback     chunked, resumable order push         │
-└───────────────┬────────────────────────────────────────────────┘
-                ▼
-        Postgres  ·  Redis
+┌───────────────────────────────────────────────────────────┐
+│  Next.js app                                              │
+│   ├─ web UI (duel session, list, unplaced, diff, settings)│
+│   ├─ /api/vote        validate → insert → refit → respond │
+│   ├─ /api/webhooks/*  linear (verify → enqueue → 200)     │
+│   └─ scoring/         MM fit, bootstrap, pair selection   │
+└──────────────────┬────────────────────────────────────────┘
+                   │ enqueue (sync only)
+┌──────────────────▼────────────────────────────────────────┐
+│  Worker                                                   │
+│   ├─ sync.ingest      webhook → upsert item               │
+│   ├─ sync.reconcile   every 5 min, cursor-based backstop  │
+│   ├─ apply.writeback  chunked, resumable order push       │
+│   └─ notify.nudge     daily (Phase 2)                     │
+└──────────────────┬────────────────────────────────────────┘
+                   ▼
+              Postgres
 ```
 
-**Webhook handlers verify, enqueue, and return 200 immediately.** Never process inline — providers retry aggressively on slow responses and you get duplicate work under exactly the load where you least want it.
+Webhook handlers **verify, enqueue, return 200 immediately.** Never process inline — providers retry aggressively on slow responses, producing duplicate work at exactly the wrong moment.
 
----
-
-## The hot path: a vote must feel instant
-
-This is the one latency budget that matters. A Slack button press should visibly resolve in well under a second.
-
-```
-POST vote
-  ├─ validate (rate limit, roster membership, duel not stale)   ~5ms
-  ├─ INSERT comparison  (append-only, never updated)            ~5ms
-  ├─ online Elo update on both items                            ~1ms
-  ├─ pop next duel from the precomputed queue                   ~2ms
-  ├─ respond to Slack / client                            ◀── <100ms total
-  └─ async: enqueue refit if ≥25 new comparisons since last
-```
-
-Two decisions make this work:
-
-1. **Duel queues are precomputed.** Pair scoring ([02 §2.2](02-ranking-model.md)) runs in a job, not in the request. Each voter has a short queue of their next pairs, refreshed after fits and on roster/item changes. Reading the next duel is a single indexed row read.
-2. **Elo front-runs the batch fit.** Movement is visible immediately; the authoritative Bradley–Terry fit lands within a minute. When they disagree, the batch fit wins silently. A persistent large divergence is a bug alarm, not a display problem.
+No Redis in Phase 1: no rate limits to enforce (one user), no hot-read caching needed at this size.
 
 ---
 
 ## Data model sketch
 
-Not final DDL — the shape, and the decisions worth arguing about now.
-
 ```sql
--- Tenancy ------------------------------------------------------
-organizations   (id, name, plan, created_at)
-users           (id, org_id, email, name, role, avatar_url,
-                 slack_user_id, tracker_account_id, weight_default,
-                 status)                      -- invited | active | disabled
+-- Identity ----------------------------------------------------
+organizations  (id, name, plan, created_at)
+users          (id, org_id, email, name, created_at)
 
-connections     (id, org_id, provider,        -- linear | jira | slack
-                 external_workspace_id, access_token_enc,
-                 refresh_token_enc, expires_at, scopes,
-                 sync_cursor, status, last_error_at)
+connections    (id, org_id, provider,          -- linear | jira
+                external_workspace_id, access_token_enc,
+                refresh_token_enc, expires_at, scopes,
+                sync_cursor, status, last_error_at)
 
--- Mirrored tickets ---------------------------------------------
-items           (id, org_id, connection_id, provider, external_id,
-                 external_key,                -- ENG-123, display only
-                 title, summary_line,         -- generated/edited duel-card line
-                 description_excerpt, url,
-                 labels jsonb, team_key, project_key,
-                 external_priority, external_estimate, external_sort_order,
-                 state, state_type,           -- active | completed | canceled
-                 requester_user_id, evidence jsonb,  -- ARR, customers, links
-                 created_at_external, updated_at_external,
-                 synced_at, deleted_at)
-                 UNIQUE (connection_id, external_id)
+-- Mirrored tickets --------------------------------------------
+items          (id, org_id, connection_id, provider, external_id,
+                external_key,                  -- ENG-123, display only
+                title, summary_line,           -- duel-card line (generated/edited)
+                url, labels jsonb, team_key, project_key,
+                external_priority, external_estimate, external_sort_order,
+                state, state_type,             -- active | completed | canceled
+                requester_name, evidence jsonb,-- ARR, customers, links
+                created_at_external, updated_at_external,
+                synced_at, deleted_at)
+                UNIQUE (connection_id, external_id)
 
--- Ladders ------------------------------------------------------
-ladders         (id, org_id, name, axis,      -- ship_first | effort
-                 filter jsonb,                -- JQL or Linear filter
-                 tier_config jsonb, capacity_points, capacity_items,
-                 season_id, settled_pct, status, created_by)
+-- Lists -------------------------------------------------------
+lists          (id, org_id, owner_id, name,
+                filter jsonb,                  -- Linear filter / JQL
+                tier_config jsonb, capacity_points, capacity_items,
+                decay_halflife_days, writeback_mode,  -- manual | auto
+                seed_order jsonb,              -- KEPT FOREVER: powers the
+                                               -- seed-vs-settled diff
+                confidence_pct, created_at)
 
-ladder_items    (id, ladder_id, item_id, tier, frozen,
-                 added_at, removed_at)
-                 UNIQUE (ladder_id, item_id)
+list_items     (id, list_id, item_id, tier, placed_at, frozen)
+                UNIQUE (list_id, item_id)
+                -- absence of placed_at ⇒ the Unplaced queue
 
-ladder_members  (id, ladder_id, user_id, weight, role_override,
-                 muted, joined_at)
+-- The event log (source of truth, append-only) -----------------
+comparisons    (id, list_id, voter_id,         -- voter_id: see note below
+                item_a_id, item_b_id,
+                outcome,                       -- a | b | tie
+                strategy,                      -- placement | infogain
+                                               -- | cutline | audit
+                is_audit bool,                 -- held out of the fit
+                latency_ms, position_in_session,
+                created_at)
+                -- NEVER UPDATE. Corrections are new rows.
+                INDEX (list_id, created_at), (item_a_id), (item_b_id)
 
--- The event log (append-only, the source of truth) -------------
-comparisons     (id, ladder_id, voter_id,
-                 item_a_id, item_b_id,
-                 outcome,                     -- a | b | tie
-                 strategy,                    -- insertion | infogain | cutline
-                                              -- | challenge | audit
-                 is_audit bool,               -- held out from selection
-                 latency_ms, position_in_session, client,
-                 coi_flag, weight_applied,
-                 created_at)
-                 -- NEVER UPDATE. Corrections are new rows.
-                 INDEX (ladder_id, created_at), (voter_id), (item_a_id), (item_b_id)
+skips          (id, list_id, item_a_id, item_b_id, created_at)
 
-duel_responses  (id, ladder_id, voter_id, item_a_id, item_b_id,
-                 kind,                        -- skip | need_context
-                 created_at)                  -- informative, not a comparison
+-- Derived state ------------------------------------------------
+ratings        (id, list_id, item_id, theta, sigma,
+                rank, rank_lo, rank_hi,        -- bootstrap CI
+                score_0_100, comparison_count,
+                p_above_cutline, computed_at)
+                UNIQUE (list_id, item_id)
 
--- Derived state (versioned snapshots, always recomputable) -----
-rating_runs     (id, ladder_id, method_version, params jsonb,
-                 comparison_count, started_at, finished_at,
-                 settled_pct, audit_accuracy, cycle_ratio)
-
-ratings         (id, rating_run_id, ladder_id, item_id,
-                 theta, sigma, rank, rank_lo, rank_hi,   -- bootstrap CI
-                 score_0_100, elo, comparison_count,
-                 p_above_cutline, disagreement_index)
-
-role_ratings    (id, rating_run_id, ladder_id, item_id, role,
-                 rank, n_voters)              -- powers the disagreement map
-
--- Process ------------------------------------------------------
-requests        (id, org_id, requester_id, ladder_id, item_id,
-                 problem, evidence jsonb, dedupe_of_item_id,
-                 status, created_at)
-
-challenges      (id, ladder_id, item_id, challenger_id, reason,
-                 rank_before, rank_after, status, opened_at, resolved_at)
-
-overrides       (id, ladder_id, item_id, user_id, target_rank,
-                 reason, active, created_at, revoked_at)
-
-applications    (id, ladder_id, user_id, provider,
-                 order_before jsonb, order_after jsonb,
-                 status, applied_at, reverted_at)   -- enables real Undo
-
--- Engagement ---------------------------------------------------
-sessions        (id, ladder_id, user_id, started_at, completed_at,
-                 duel_count, source)          -- slack | web
-streaks         (user_id, current, longest, last_session_date, freezes_left)
-audit_log       (id, org_id, actor_id, action, target_type, target_id,
-                 before jsonb, after jsonb, created_at)
+-- Process -------------------------------------------------------
+pins           (id, list_id, item_id, target_rank, reason,
+                active, created_at)
+applications   (id, list_id, provider, order_before jsonb,
+                order_after jsonb, status, applied_at, reverted_at)
+sessions       (id, list_id, user_id, kind,    -- onboarding | maintenance
+                started_at, completed_at, duel_count, abandoned_at)
+audit_log      (id, org_id, actor_id, action, target_type, target_id,
+                before jsonb, after jsonb, created_at)
 ```
 
-### The three decisions worth defending
+### Four decisions worth defending
 
-**1. `comparisons` is append-only and never mutated.** Everything else — ranks, scores, Elo, settled % — is derived and reproducible from it. This buys: replaying history after a model change, answering "why is this #3" with the actual evidence, running the [02 §7](02-ranking-model.md) simulation harness against real data, and recovering from any scoring bug without data loss. The cost is storage, which is nothing.
+**1. `comparisons` is append-only and never mutated.** Everything else — ranks, scores, confidence — is derived and fully reproducible. This buys replaying history after a model change, answering "why is this #3" with actual evidence, running the harness against real data, and recovering from any scoring bug without data loss. Storage cost is nothing.
 
-**2. Ratings are versioned snapshots, not mutable columns on `items`.** `rating_runs` records the method version and parameters. When the model changes, old rankings remain explainable instead of silently rewritten, and week-over-week movement is a join instead of a changelog we have to remember to write.
+**2. Keep `voter_id` even though there's exactly one voter.** It costs a column now and makes [08](08-multiplayer-later.md) an *additive feature* rather than a schema migration across the only table that can't be regenerated. The cheapest forward-compatibility decision available; skipping it would be the expensive kind of clever.
 
-**3. Overrides are separate rows, not edits to rank.** The model's answer and the human's answer coexist and are both visible. This is the [00](00-vision.md) positioning made structural: the PM overrules the ladder without erasing what the ladder said.
+**3. `ratings` is a single current row per item, not versioned snapshots.** The multiplayer design versioned every fit to explain week-over-week movement across a changing roster. Single-player doesn't need it — the comparison log replays exactly, so any historical rank is recomputable on demand. Simpler table, no `rating_runs`, no snapshot bloat.
 
----
-
-## Scoring pipeline
-
-```
-comparison INSERT
-    │
-    ├─▶ Elo update (inline, both items)
-    │
-    └─▶ if new_comparisons_since_fit ≥ 25  OR  nightly
-            │
-            ▼
-        score.refit(ladder)
-            1. load comparisons, apply weights × time decay
-            2. exclude audit-set rows from the fit
-            3. MM iterate to convergence (+ prior pseudo-comparisons)
-            4. bootstrap B=200 → rank CIs, σ, P(above cut line)
-            5. per-role fits → role_ratings (disagreement map)
-            6. metrics: settled %, audit accuracy, cycle ratio
-            7. INSERT rating_run + ratings (new snapshot)
-            8. enqueue duels.generate; invalidate cache
-            9. emit events: upsets, cut-line crossings, resolved challenges
-```
-
-Step 2 matters and is easy to get wrong: **the audit set must be excluded from the fit** or its accuracy measurement is circular and meaninglessly high.
+**4. `lists.seed_order` is kept forever.** It looks like a onboarding artifact to clean up. It isn't — it powers the seed-vs-settled diff, which is the product's best moment ([03 §1](03-gamification.md)) and a primary validation metric ([02 §7](02-ranking-model.md)).
 
 ---
 
 ## The simulation harness (build this first)
 
-Before a single integration works, build a harness that generates synthetic ladders, synthetic voters (with configurable bias, noise, laziness, and bad faith), and replays the full pipeline.
+Before any integration works: synthetic items with known ground-truth θ, a synthetic voter with configurable noise, drift, **fatigue** (accuracy decaying through a long session), and occasional self-contradiction. Replay the pipeline.
 
-It answers, in minutes and for free, questions that would otherwise take a quarter of real usage:
-- duels-to-settled at N = 30 / 60 / 150 and 5 / 10 / 20 voters
-- infogain vs. random selection — the real multiplier, not the estimated one
-- distortion from one bad-faith voter at weight 1.0, and at what weight it stops mattering
-- whether time decay causes oscillation
-- whether the settled % metric behaves monotonically enough to show a user
+It answers in minutes, for free, what would otherwise cost months of real usage:
+- duels-to-confident at N = 60 / 150 / 300 — does the [02 §1](02-ranking-model.md) table survive realistic noise?
+- infogain vs. random — the actual multiplier
+- **what decay half-life keeps a stable backlog quiet while flagging a churning one** — the hardest parameter to guess and the one the maintenance loop depends on
+- does late-session fatigue measurably corrupt a ~180-duel sitting? If so, cap it
 
-Every parameter in [02 §9](02-ranking-model.md) is currently a guess. This turns them into measurements. It is the highest-leverage week of engineering in the whole project, it's pure TypeScript with no external dependencies, and it doubles as the regression suite for the scoring engine forever.
+Highest-leverage week in the project: pure TypeScript, zero dependencies, zero integrations, and it doubles as the permanent regression suite for the scoring engine.
 
 ---
 
 ## Observability
 
-Product health *is* loop health. Instrument the loop, not just the servers:
+Product health is loop health:
 
-- **median time per duel** (target < 6s; > 10s means the cards lack context, < 2s means people are tapping blind)
-- **session completion rate** (started 5, finished 5)
-- **mid-session drop-off position** (if everyone quits at duel 4, the cap is 3)
-- `need_context` and `skip` **rates per ladder** — the best available proxy for ticket hygiene
-- **settled % trajectory** per ladder
-- **audit-set accuracy** per ladder — the honesty check; alarm if it approaches chance
-- **cycle ratio** — flags incoherent ladders
-- sync lag, webhook failure rate, token expiry, Apply success rate
+- **Median time per duel** (target 4–6s; >10s means cards lack context, <2s means tapping blind)
+- **Onboarding completion rate** and **abandonment position** — the single most important Phase 1 number. If everyone quits at duel 70, the session is too long
+- **Time-per-duel drift within a session** — the fatigue signal
+- **Confidence trajectory** per list, and decay-driven return rate
+- **Audit-set accuracy** — the honesty check; alarm near chance
+- **Seed-vs-settled divergence** — near zero across users is a kill signal ([07](07-open-questions.md))
+- Sync lag, webhook failures, token expiry, Apply success rate
 
 ---
 
 ## Testing
 
-- **Scoring engine:** property tests (a dominant item ranks first; a reversed comparison log reverses the order; ties leave the order unchanged; undefeated items stay finite — the §3.1 regression that will absolutely bite otherwise).
+- **Scoring engine:** property tests — a dominant item ranks first; a reversed log reverses the order; ties leave the order unchanged; **undefeated items stay finite** (the [02 §3.2](02-ranking-model.md) regression that will otherwise bite in production on the very first placement).
 - **Golden fixtures:** frozen comparison logs → expected rankings, so model changes produce a reviewable diff.
-- **Integrations:** recorded HTTP fixtures; a live smoke test against a sandbox workspace in CI.
-- **Apply:** the chunked/resumable path must be tested against partial failure explicitly, because Jira's rank API will produce it in production.
+- **Integrations:** recorded HTTP fixtures; live smoke test against a sandbox workspace in CI.
+- **Apply:** explicitly test the chunked/resumable path against partial failure — Jira's rank API will produce it in production.
