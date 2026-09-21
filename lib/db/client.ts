@@ -108,9 +108,6 @@ async function ensureSchema(db: AppDb): Promise<void> {
       PRIMARY KEY (list_id, item_id)
     );
   `);
-  await db.execute(
-    sql`CREATE UNIQUE INDEX IF NOT EXISTS list_items_list_id_item_id_idx ON list_items (list_id, item_id);`,
-  );
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS comparisons (

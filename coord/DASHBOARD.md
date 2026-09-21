@@ -74,7 +74,7 @@ Agents: update your own file, not this table. The coordinator refreshes it.
 
 | Agent | Scope | Status |
 |---|---|---|
-| @db | schema, client, queries, fixtures | dispatched |
+| @db | schema, client, queries, fixtures | **DONE + verified** — seed runs clean from scratch, 60 items |
 | @backend | scoring engine, sim harness, API routes | dispatched |
 | @frontend | duel session, list view, diff UI | dispatched |
 | @qa | property tests, golden fixtures, API tests | dispatched |

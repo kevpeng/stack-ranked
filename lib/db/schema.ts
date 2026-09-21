@@ -30,8 +30,8 @@ import {
   primaryKey,
   text,
   timestamp,
-  uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import type { Evidence } from '../types';
 
 /** docs/05 §"Lists". `seedOrder` is kept forever — powers the seed/settled diff. */
 export const lists = pgTable('lists', {
@@ -60,7 +60,7 @@ export const items = pgTable('items', {
   estimate: doublePrecision('estimate'),
   /** ItemState: 'active' | 'completed' | 'canceled'. */
   state: text('state').notNull(),
-  evidence: jsonb('evidence').$type<Record<string, unknown>>().notNull().default({}),
+  evidence: jsonb('evidence').$type<Evidence>().notNull().default({}),
   createdAtExternal: timestamp('created_at_external', { withTimezone: true }).notNull(),
   /** Linear priority 0-4. Cold-start seed only. */
   externalPriority: integer('external_priority'),
@@ -82,10 +82,9 @@ export const listItems = pgTable(
     tier: text('tier'),
     placedAt: timestamp('placed_at', { withTimezone: true }),
   },
-  (table) => [
-    primaryKey({ columns: [table.listId, table.itemId] }),
-    uniqueIndex('list_items_list_id_item_id_idx').on(table.listId, table.itemId),
-  ],
+  // Composite primary key doubles as the "Unique (listId, itemId)" constraint
+  // from coord/CONTRACTS.md — no separate unique index needed.
+  (table) => [primaryKey({ columns: [table.listId, table.itemId] })],
 );
 
 /**
