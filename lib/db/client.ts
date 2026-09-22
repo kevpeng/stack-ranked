@@ -56,11 +56,28 @@ export function __resetDbForTests(): void {
 
 async function initDb(): Promise<AppDb> {
   const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    const db: AppDb = drizzleNeon(neon(databaseUrl), { schema });
+    await ensureSchema(db);
+    return db;
+  }
 
-  const db: AppDb = databaseUrl
-    ? drizzleNeon(neon(databaseUrl), { schema })
-    : drizzlePglite(new PGlite(path.join(process.cwd(), '.pglite')), { schema });
+  // Under test, PGlite runs IN MEMORY rather than against ./.pglite.
+  //
+  // Vitest runs test files in parallel workers, and every worker was opening
+  // a PGlite instance over the same on-disk data directory. PGlite is a
+  // single-connection embedded Postgres, so the contention crashed its WASM
+  // runtime with a bare `RuntimeError: Aborted()` — an intermittent failure
+  // that moved between test files run to run (observed 30-36 of 36 passing
+  // across repeated runs).
+  //
+  // In-memory gives each worker an isolated database, which removes the
+  // contention entirely and is faster. Tests seed the data they need, so
+  // nothing depends on state persisting across processes.
+  const inMemory = process.env.VITEST !== undefined || process.env.PGLITE_IN_MEMORY === '1';
+  const client = inMemory ? new PGlite() : new PGlite(path.join(process.cwd(), '.pglite'));
 
+  const db: AppDb = drizzlePglite(client, { schema });
   await ensureSchema(db);
   return db;
 }
