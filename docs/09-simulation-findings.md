@@ -1,16 +1,21 @@
 # 09 — Simulation Findings
 
-> Measured with `lib/sim` and a direct diagnostic probe, against a synthetic
-> voter at 87% accuracy — the figure `docs/02 §1` assumes. **Two headline
-> claims in `docs/02` do not survive measurement.** This is what the harness
-> was built to find, and it found it before any of it reached a user.
+> Measured with `lib/sim` against a synthetic voter at 87% accuracy — the
+> figure `docs/02 §1` assumes. The harness did what `docs/05` predicted:
+> it invalidated a headline claim before it reached a user.
+>
+> **Numbers here are from the complete run** (full tables and methodology in
+> `coord/status/sim.md`). An earlier revision of this document reported
+> figures from a partial run and drew the wrong conclusion about adaptive
+> selection; Finding 3 below is the corrected version.
 
 ## Finding 1 — the convergence budget in `docs/02 §1` is far too optimistic
 
 | | docs/02 §1 predicted | measured |
 |---|---|---|
-| N=60, duels to 0.9 confidence | ~100 | **not reached in 1,380** (plateaus ~0.78–0.82) |
-| N=150, duels to 0.9 confidence | ~210 | **not reached in 2,000** (reached 0.840) |
+| N=60, duels to 0.9 confidence | ~100 | **not reached.** Selection self-terminated at 1,334 duels, confidence stuck at 0.733 |
+| N=150, duels to 0.9 confidence | ~210 | **not reached in 2,000** (0.840) |
+| N=300, duels to 0.9 confidence | ~310 | **not reached** within 5–15× the predicted floor |
 
 The information-theoretic floor in `docs/02 §1` is not wrong as arithmetic —
 it correctly computes the bits needed to *identify which items are above the
@@ -63,35 +68,73 @@ range forever and the UI would nag about pairs that can never resolve. That is
 exactly the fatigue failure `docs/03` warns about, manufactured by our own
 metric.
 
-## Finding 3 — adaptive selection did not beat random
+## Finding 3 — adaptive DOES beat random, but ~2×, not the claimed 3–5×
 
 `docs/02 §2.2` claims information-gain selection buys 3–5× over random pairs.
+At equal confidence thresholds:
 
-| N=60 | final confidence | final Spearman vs truth |
+| N | threshold | adaptive | random | multiplier |
+|---|---|---|---|---|
+| 60 | ≥50% | 242 | 331 | 1.37× |
+| 60 | ≥70% | 437 | 837 | **1.92×** |
+| 150 | ≥70% | 839 | 1,920 | **2.29×** |
+| 300 | ≥70% | 817 | 1,654 | **2.02×** |
+
+The advantage is real, starts near 1× in the first ~30% of confidence, and
+grows to roughly **2× by 70%** — trending upward, though neither arm reached
+the 90% target so the endpoint is unobserved. So `docs/02 §2.2` is
+**directionally right and numerically optimistic**, not wrong.
+
+### The trap: random beats adaptive on whole-list rank correlation
+
+At N=300 / 1,200 duels: adaptive Spearman **0.678**, random **0.812**.
+
+This is **expected and correct behaviour, not a defect.** The cut-line
+strategy deliberately starves non-boundary items — precisely what `docs/02 §1`
+prescribes with "nobody needs a total order." Adaptive buys cut-line accuracy
+by spending nothing on items #200–#300, so a whole-list metric scores it down
+for doing its job.
+
+**The trap is for us, later:** anyone who builds a "ranking health" dashboard
+on global Spearman will conclude adaptive selection is broken and 'fix' it by
+making it worse. Any health metric must be restricted to the cut-line
+neighbourhood.
+
+*(An earlier revision of this doc reported "random won" as a headline failure.
+That compared unequal budgets on the wrong metric. Corrected above.)*
+
+## Finding 4 — fatigue measurably corrupts results
+
+Consistent across all repeats: a fatigued voter costs **~0.10 Spearman** and
+lowers confidence, from a curve that only drops accuracy from 87% to 75.6% by
+tap 180. Modest fatigue does real damage.
+
+This supports capping session length — `docs/03`'s "good stopping point"
+nudge is not just a courtesy, it protects the data.
+
+## Finding 5 — the default decay half-life leans the wrong way
+
+A sharp tradeoff, single-seed so treat the exact numbers as indicative:
+
+| half-life | responsiveness to a real escalation | a genuinely stable list |
 |---|---|---|
-| adaptive | 0.733 | 0.932 |
-| random | **0.850** | **0.990** |
+| 30 days | **+0.26** pAboveCutline after a 10-duel session | nagged to 0% confidence within 6 months |
+| 90 days (default) | +0.045 — nearly unresponsive | stays reasonably quiet |
 
-Random won on both, and notably on **rank recovery** (0.990 vs 0.932) — the
-measure of whether the ranking is actually right.
-
-**Caveats, stated honestly:** random was given a larger budget (5,000 duels vs
-adaptive's 1,500 cap), so this is not an equal-budget comparison. And adaptive
-reported `stoppedEarly=true` — it exhausted what it considered worth asking
-and then stopped, while random simply kept going.
-
-So this is **not yet proof that infogain is worthless.** The likelier reading,
-given Finding 2: adaptive concentrates duels on the cut-line cluster, which is
-exactly where the answer is irreducibly uncertain, so it spends its budget on
-unanswerable pairs and starves the rest of the list — which is what drags its
-Spearman down. Random spreads attention and recovers the overall order better
-while never resolving the cut line either.
-
-If that reading is right, it is an argument for **rebalancing** cut-line focus
-rather than abandoning adaptive selection. It needs an equal-budget rerun to
-confirm.
+The default keeps a stable list quiet at the cost of barely reacting to real
+churn — which is the wrong failure mode for a tool whose maintenance loop
+exists to catch change. Worth a per-list setting or a confidence floor rather
+than one global constant.
 
 ## What should change
+
+0. **Let onboarding re-ask a contested pair.** The cheapest, highest-value
+   fix. In `lib/scoring/selection.ts` a just-asked pair scores ~0 twice over:
+   `staleness = 1 - decayWeight(...)` collapses its value, and the `notRecent`
+   filter excludes it outright. With a 90-day half-life and a session lasting
+   minutes, **every** prior comparison is "recent", so the contested cut-line
+   pairs that most need a confirming second look can never get one. A session
+   lasting minutes should not be governed by a half-life measured in months.
 
 1. **Redefine "settled" against decision stability, not posterior extremity.**
    A pair is done when more comparisons would not change *the decision* — i.e.

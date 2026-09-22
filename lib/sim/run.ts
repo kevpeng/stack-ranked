@@ -222,6 +222,10 @@ function spearmanAt(snapshots: StepSnapshot[], duels: number): number | null {
   const s = snapshots[duels];
   return s ? s.spearmanRho : null;
 }
+function confidenceAt(snapshots: StepSnapshot[], duels: number): number | null {
+  const s = snapshots[duels];
+  return s ? s.confidence : null;
+}
 
 // ---------------------------------------------------------------------------
 // World/N configuration — mirrors docs/02 §1's table exactly, so the
@@ -301,7 +305,7 @@ function printExperiment1(adaptive: SessionResult[]): void {
     return [
       String(cfg.n), String(cfg.docsFloor), String(cfg.docsSession),
       fmtDuels(measured, ADAPTIVE_MAX[cfg.n]), ratio,
-      pct(spearmanAt(a.snapshots, Math.min(cfg.docsFloor, a.snapshots.length - 1))),
+      pct(confidenceAt(a.snapshots, Math.min(cfg.docsFloor, a.snapshots.length - 1))),
     ];
   });
   printTable(
