@@ -61,9 +61,25 @@ That's the aha, it lands in the first fifteen minutes, and it's free — it fall
 
 Anyone can throw a request at the backlog — Slack, a Jira ticket, a form. **Only the PO ranks.** This keeps the wedge tight while preserving the most useful multiplayer bit: triaging 40 inbound requests stops being a dreaded queue and becomes 40 × 5 taps.
 
+## Run it
+
+```bash
+npm install
+npm run db:seed     # 60-item demo backlog
+npm run dev         # http://localhost:3000
+```
+
+No database to install and no credentials — PGlite runs Postgres in WASM on
+disk. See [10 — Running & deploying](docs/10-running-and-deploying.md) for
+Vercel (which needs a real Postgres: PGlite's local filesystem does not
+survive on serverless).
+
 ## Status
 
-**Phase 0 — planning.** No code. These docs are the design.
+**MVP built.** Bradley-Terry engine, 8 API routes, keyboard-first duel
+session, ranked list with cut line, seed-vs-settled diff, 60-item fixture
+backlog, 36 tests, simulation harness. No tracker integration yet — see
+[06 — Roadmap](docs/06-roadmap.md).
 
 | Doc | What's in it |
 |---|---|
@@ -77,6 +93,7 @@ Anyone can throw a request at the backlog — Slack, a Jira ticket, a form. **On
 | [07 — Open questions](docs/07-open-questions.md) | Decisions needed, risks, kill criteria |
 | [08 — Multiplayer, later](docs/08-multiplayer-later.md) | The consensus design, parked but not lost |
 | [09 — Simulation findings](docs/09-simulation-findings.md) | **Measured results — two docs/02 claims did not survive** |
+| [10 — Running & deploying](docs/10-running-and-deploying.md) | Local setup (3 commands) and Vercel |
 
 ## The design bet
 
