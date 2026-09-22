@@ -132,14 +132,27 @@ export async function createList(input: {
       })),
     );
 
-    // Every seed item starts in the Unplaced queue (tier + placedAt null) —
-    // docs/05: "absence of placed_at => the Unplaced queue".
+    // Seeded items arrive PLACED, carrying the order inherited from the
+    // tracker (docs/02 §5, docs/01 onboarding loop): the list opens as
+    // "Seeded - 0% confident", meaning every item already has a provisional
+    // position but no evidence behind it yet. That seeded order is exactly
+    // what the ~180-duel onboarding session then refines, and what /diff
+    // later compares against.
+    //
+    // The Unplaced queue (placedAt null) is for items that arrive AFTER
+    // creation via the intake loop (docs/01 loop 2) -- a request nobody has
+    // ranked yet. Starting seeded items there instead left a fresh list with
+    // placedCount 0, so /duel had no pair to offer and onboarding could
+    // never begin.
+    //
+    // tier stays null: a tier is the coarse bucket a human picks while
+    // placing an item by hand, and a seeded item has not been bucketed.
     await db.insert(listItems).values(
       input.items.map((item) => ({
         listId,
         itemId: item.id,
         tier: null,
-        placedAt: null,
+        placedAt: now,
       })),
     );
   }

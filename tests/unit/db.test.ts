@@ -58,7 +58,16 @@ describe('lib/db/queries — round trip', () => {
     expect(all.some((l) => l.id === created.id)).toBe(true);
   });
 
-  it('newly created items start unplaced', async () => {
+  // Seeded items arrive PLACED, carrying the order inherited from the tracker.
+  // docs/01 onboarding: a new list opens "Seeded - 0% confident" and is duelled
+  // immediately; docs/01 intake: the Unplaced queue holds requests that arrive
+  // LATER, which "land in the Unplaced queue, not in the ranked list".
+  //
+  // This test previously asserted the opposite (everything starts unplaced).
+  // That left a fresh list with placedCount 0, so GET /duel had no pair to
+  // offer and the ~180-duel onboarding session could never start -- verified
+  // against a running server before the behaviour was changed.
+  it('seeded items start placed, carrying the tracker order', async () => {
     const items = [makeItem(id('db-u1')), makeItem(id('db-u2'))];
     const created = await createList({
       name: uniqueName('unplaced'), capacityItems: 1, items, seedOrder: items.map((i) => i.id),
@@ -67,25 +76,28 @@ describe('lib/db/queries — round trip', () => {
     const all = await getItems(created.id);
     expect(all.map((i) => i.id).sort()).toEqual(items.map((i) => i.id).sort());
 
-    const unplaced = await getUnplacedItems(created.id);
-    expect(unplaced.map((i) => i.id).sort()).toEqual(items.map((i) => i.id).sort());
-
     const placed = await getPlacedItems(created.id);
-    expect(placed).toEqual([]);
+    expect(placed.map((i) => i.id).sort()).toEqual(items.map((i) => i.id).sort());
+
+    const unplaced = await getUnplacedItems(created.id);
+    expect(unplaced).toEqual([]);
   });
 
-  it('placeItem moves an item from unplaced to placed', async () => {
+  it('placeItem assigns a tier without unplacing', async () => {
     const items = [makeItem(id('db-p1')), makeItem(id('db-p2'))];
     const created = await createList({
       name: uniqueName('place'), capacityItems: 1, items, seedOrder: items.map((i) => i.id),
     });
 
+    // Seeded items are already placed, so placeItem here is the re-placement
+    // path (assigning a tier). Both items stay placed and nothing regresses
+    // into the Unplaced queue.
     await placeItem(created.id, items[0].id, 'now');
 
     const placed = await getPlacedItems(created.id);
     const unplaced = await getUnplacedItems(created.id);
-    expect(placed.map((i) => i.id)).toEqual([items[0].id]);
-    expect(unplaced.map((i) => i.id)).toEqual([items[1].id]);
+    expect(placed.map((i) => i.id).sort()).toEqual(items.map((i) => i.id).sort());
+    expect(unplaced).toEqual([]);
   });
 
   it('inserts a comparison and reads it back via getComparisons', async () => {
