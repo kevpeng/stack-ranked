@@ -25,6 +25,8 @@ The math works out much better than the committee version:
 
 That last row is the whole argument. A single motivated PO ranking their own backlog will sit for ~180 duels the way they'd sit to import a library into Letterboxd. **Convergence stops being a waiting game and becomes an onboarding session.**
 
+> ⚠️ **The ~100 and ~180 figures above are unsupported as of the first simulation run.** Measured convergence is far slower, because the confidence metric asks for more than identifying the cut-line set. See [09 — Simulation findings](docs/09-simulation-findings.md). The ranking itself is sound (Spearman 0.93–0.99 vs ground truth); the stopping rule and progress metric need rework.
+
 It also deletes most of the complexity: no vote weights, no roster, no consensus, no anti-gaming (you can't cheat a game you play against yourself), no per-role aggregation, and no reason to split scoring into online + batch — with one voter the model refits in under a millisecond on every tap.
 
 ## The loop
@@ -74,6 +76,7 @@ Anyone can throw a request at the backlog — Slack, a Jira ticket, a form. **On
 | [06 — Roadmap](docs/06-roadmap.md) | Phasing, metrics, scope cuts |
 | [07 — Open questions](docs/07-open-questions.md) | Decisions needed, risks, kill criteria |
 | [08 — Multiplayer, later](docs/08-multiplayer-later.md) | The consensus design, parked but not lost |
+| [09 — Simulation findings](docs/09-simulation-findings.md) | **Measured results — two docs/02 claims did not survive** |
 
 ## The design bet
 
