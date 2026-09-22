@@ -21,8 +21,15 @@ export function getRequest(path: string): Request {
   return new Request(`${ORIGIN}${path}`, { method: 'GET' });
 }
 
-/** Next 15 dynamic-route context: params is a Promise. */
-export function ctx(params: Record<string, string>): { params: Promise<Record<string, string>> } {
+/**
+ * Next 15 dynamic-route context: params is a Promise.
+ *
+ * Generic in the param shape so it satisfies each handler's specific
+ * signature (e.g. `{ params: Promise<{ id: string }> }`). A plain
+ * `Record<string, string>` is not assignable to those, because a Record
+ * carries no guarantee that `id` is present.
+ */
+export function ctx<T extends Record<string, string>>(params: T): { params: Promise<T> } {
   return { params: Promise.resolve(params) };
 }
 

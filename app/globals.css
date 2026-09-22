@@ -1,3 +1,20 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background-color: #fafafa; /* zinc-50 */
+  color: #18181b; /* zinc-900 */
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #09090b; /* zinc-950 */
+    color: #fafafa; /* zinc-50 */
+  }
+}
