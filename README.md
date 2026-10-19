@@ -94,6 +94,7 @@ backlog, 36 tests, simulation harness. No tracker integration yet — see
 | [08 — Multiplayer, later](docs/08-multiplayer-later.md) | The consensus design, parked but not lost |
 | [09 — Simulation findings](docs/09-simulation-findings.md) | **Measured results — two docs/02 claims did not survive** |
 | [10 — Running & deploying](docs/10-running-and-deploying.md) | Local setup (3 commands) and Vercel |
+| [11 — Decision log](docs/11-decisions.md) | **Every decision in one place — start here** |
 
 ## The design bet
 
